@@ -1,0 +1,186 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Sep 10 12:31:58 2016
+
+@author: Rohan Sarkar
+"""
+
+import cv2
+import numpy as np
+import math
+#from scipy.spatial import distance
+
+# Input images
+image1 = cv2.imread("flatiron.jpg")
+image2 = cv2.imread("monalisa.jpg")
+image3 = cv2.imread("wideangle.jpg")
+Points_1=np.array([[273,96,1],[153,552,1],[493,28,1],[412,581,1]],dtype='float64')
+Points_image1_boundary=np.array([[0,0,1],[0,image1.shape[1],1],[image1.shape[0],0,1],[image1.shape[0],image1.shape[1],1]],dtype='float64')
+def Find_Physical_Point(Point):
+    return (Point/Point[2])
+# Finding homography to remove perspective distortion
+# Function to find homography using 2 parallel lines
+def Homography_Projective(points):
+    #Finding lines across the 4 boundary points
+    l1= np.cross(points[2,:],points[3,:])
+    l2= np.cross(points[0,:],points[1,:])
+    l3= np.cross(points[2,:],points[0,:])
+    l4= np.cross(points[3,:],points[1,:])
+    #Finding the normalised lines
+    l1p = Find_Physical_Point(l1)
+    l2p = Find_Physical_Point(l2)
+    l3p = Find_Physical_Point(l3)
+    l4p = Find_Physical_Point(l4)
+    #Finding the vanishing points in HC
+    A= np.cross(l3p,l4p)
+    B= np.cross(l1p,l2p)
+    #Finding the vanishing points's physical coordinates
+    Ap = Find_Physical_Point(A)
+    Bp = Find_Physical_Point(B)
+    #Finding the vanishing line
+    l_inf= np.cross(Ap,Bp)
+    #Finding the normalised vanishing line
+    l_infp = Find_Physical_Point(l_inf)
+    #Finding the Homography to eliminate projective distortion
+    H = np.array([[1.0,0,0],[0,1.0,0],[l_infp[0],l_infp[1],l_infp[2]]])
+    return H
+# Finding the dimensions and offset for the new image in world plane
+def Find_Boundary_Dimension_Offset(points,Homography):
+    #H_inv = np.linalg.inv(HG)
+    bp = np.zeros((4,2))
+    for i in range(0,4):
+        point_bound = np.matrix([[points[i,0]],[points[i,1]],[1]])
+        point_transform = np.dot(Homography,point_bound)
+        physical_point = Find_Physical_Point(point_transform)
+        bp[i,0] = physical_point[0]
+        bp[i,1] = physical_point[1]
+    bp_x_min = min(bp[0,0],bp[1,0],bp[2,0],bp[3,0])
+    bp_x_max = max(bp[0,0],bp[1,0],bp[2,0],bp[3,0])
+    bp_y_min = min(bp[0,1],bp[1,1],bp[2,1],bp[3,1])
+    bp_y_max = max(bp[0,1],bp[1,1],bp[2,1],bp[3,1])
+    height = int(bp_x_max-bp_x_min)
+    width = int(bp_y_max-bp_y_min)
+    offset_x = int(np.ceil(bp_x_min))
+    offset_y = int(np.ceil(bp_y_min))
+    return offset_x,offset_y,height,width
+
+# Getting RGB data function using weighted average starts here
+def Weighted_Interpolation(Point, Image):
+    P_lu =Image[(math.floor(Point[0])),(math.floor(Point[1]))]
+    P_uu =Image[math.floor(Point[0]),math.floor(Point[1]+1)]
+    P_ll =Image[math.floor(Point[0]+1),math.floor(Point[1])]
+    P_ul =Image[math.floor(Point[0]+1),math.floor(Point[1]+1)]
+    D_x = Point[0] - math.floor(Point[0])
+    D_y = Point[1] - math.floor(Point[1])
+    W_lu= pow(pow(D_x,2)+pow(D_y,2),-0.5)
+    W_uu = pow(pow(D_x,2)+pow(1-D_y,2),-0.5)
+    W_ll = pow(pow(1-D_x,2)+pow(D_y,2),-0.5)
+    W_ul = pow(pow(1-D_x,2)+pow(1-D_y,2),-0.5)
+    WI_data = (P_lu*W_lu+P_uu*W_uu+P_ll*W_ll+P_ul*W_ul)/(W_lu+W_uu+W_ll+W_ul)
+    return WI_data
+# getting RGB data function using weighted average ends here
+    
+# Image mapping code starts here
+def image_mapping(dest_image,Homography,Off_X,Off_Y,Dim_X,Dim_Y):
+    tmp_srcimage=np.zeros((int(Dim_X),int(Dim_Y),3),dtype='uint8')
+    cv2.imwrite('test_src.jpg',tmp_srcimage)
+    H_inv = np.linalg.inv(Homography)
+    for i in range(0,int(Dim_X)):
+        for j in range(0,int(Dim_Y)):
+            point_tmp = np.array([i, j, 1])
+            point_new = point_tmp+np.array([Off_X, Off_Y, 0])
+            trans_coord = np.array(np.dot(H_inv,point_new))
+	    #print trans_coord
+            trans_coord = trans_coord/trans_coord[2]
+            #print trans_coord
+            if (trans_coord[0]>0) and (trans_coord[0]<dest_image.shape[0]-1) and (trans_coord[1]>0) and (trans_coord[1]<dest_image.shape[1]-1):
+                    tmp_srcimage[i][j]=Weighted_Interpolation(trans_coord,dest_image)
+    return tmp_srcimage
+
+# Points obtained from gimp converted into homogeneous coordinates
+# Frame Coordinates for Flatiron.jpg
+#Points_new1=np.array([[504,428,1],[552,421,1],[506,495,1],[558,490,1]])
+#Points_new=np.array([[288,228,1],[281,260,1],[333,220,1],[325,255,1]])
+#Points_new2=np.array([[99,316,1],[535,214,1],[84,368,1],[539,274,1]])
+
+def image_mapping1(dest_image,Homography,Off_X,Off_Y,Dim_X,Dim_Y):
+    tmp_srcimage=np.zeros((int(Dim_X),int(Dim_Y),3),dtype='uint8')
+    cv2.imwrite('test_src.jpg',tmp_srcimage)
+    invHom = np.linalg.inv(Homography)
+    trans_coord=np.array([0,0,0])
+    for i in range(0,int(Dim_X)):
+        for j in range(0,int(Dim_Y)):
+            point_tmp = np.array([i, j, 1])
+            point_new = point_tmp
+	    trans_coord = np.matrix(np.dot(invHom,point_tmp))
+            #trans_coord = trans_coord/trans_coord[2]
+	    map_coord=np.array([0,0,1])
+	    map_coord[0]=trans_coord[0,0]/trans_coord[0,2]
+	    map_coord[1]=trans_coord[0,1]/trans_coord[0,2]
+	    #print map_coord
+            if (trans_coord[0,0]>0) and (trans_coord[0,0]<dest_image.shape[0]-1) and (trans_coord[0,1]>0) and (trans_coord[0,1]<dest_image.shape[1]-1):
+                    tmp_srcimage[i][j]=Weighted_Interpolation(map_coord,dest_image)
+    return tmp_srcimage
+
+H1p = Homography_Projective(Points_1)
+print H1p
+H1p_inv = np.linalg.inv(H1p)
+[Off_X,Off_Y,Dim_X,Dim_Y]= Find_Boundary_Dimension_Offset(Points_image1_boundary,H1p)
+print Off_X,'\n',Off_Y,'\n',Dim_X,'\n',Dim_Y
+print H1p_inv
+output=image_mapping(image1,H1p,Off_X,Off_Y,Dim_X,Dim_Y)
+cv2.imwrite('ortho_H2.jpg',output)
+image12 = output
+#Points_121=np.array([[74,264,1],[164,58,1],[246,15,1]])
+#Points_122=np.array([[114,243,1],[95,253,1],[46,185,1]])
+
+Points_121=np.array([[153,121,1],[170,114,1],[163,128,1]])
+Points_122=np.array([[182,57,1],[198,48,1],[192,62,1]])
+#Points_1=np.array([[269,95,1],[153,551,1],[493,26,1],[412,582,1]])
+Points_image1_boundary_2=np.array([[0,0,1],[0,image12.shape[1],1],[image12.shape[0],0,1],[image12.shape[0],image12.shape[1],1]],dtype='float64')
+#####################################################
+""" Removing Affine Distortion"""
+## Finding Lines
+#def Lines(points):
+#	Line=np.cross(points[0],points[1])
+#	Line_n=Line/Line[2]
+#	return Line_n
+
+# Finding Homography of Affine
+def Homography_Affine(Points_1,Points_2):
+	   # Finding two orthogonal lines from 3 points
+         L1=np.cross(Points_1[0],Points_1[1])
+         M1=np.cross(Points_1[1],Points_1[2])
+         L2=np.cross(Points_2[0],Points_2[1])
+         M2=np.cross(Points_2[1],Points_2[2])
+         # Finding S matrix which is ATA
+         Mat_A=np.zeros((2,2),dtype='float')
+         b=np.zeros((2,1),dtype='float')
+         Mat_A[0]=np.array([L1[0]*M1[0],M1[0]*L1[1]+M1[1]*L1[0]])
+         Mat_A[1]=np.array([L2[0]*M2[0],M2[0]*L2[1]+M2[1]*L2[0]])
+         b=np.array([-M1[1]*L1[1],-M2[1]*L2[1]])
+         [s11, s12]= (np.linalg.pinv(Mat_A).dot(b))
+         print s11,s12
+         S=np.zeros((2,2),dtype='float')
+         # Generating S matrix
+         S[0]=np.array([s11,s12])
+         S[1]=np.array([s12,1])
+         # Find SVD decomposition of S to find A
+         V,D_S,Vt=np.linalg.svd(S,full_matrices=1)
+         D_A=np.sqrt(D_S)
+         # Reconstructing D_A matrix from the S
+         D = np.zeros((2,2),dtype='float')
+         D[0]= np.array([D_A[0],0])
+         D[1]= np.array([0,D_A[1]])
+         A=V.dot(D).dot(Vt)
+         # Finally the homography is 
+         H=np.matrix([[A[0,0],A[0,1],0],[A[1,0],A[1,1],0],[0,0,1]])
+         return H
+         
+H1a = Homography_Affine(Points_121,Points_122)
+print H1a
+H1a_inv = np.linalg.inv(H1a)
+[Off_X2,Off_Y2,Dim_X2,Dim_Y2]= Find_Boundary_Dimension_Offset(Points_image1_boundary_2,H1a_inv)    
+print Off_X2,'\n',Off_Y2,'\n',Dim_X2,'\n',Dim_Y2
+output1=image_mapping1(output,H1a,Off_X2,Off_Y2,Dim_X2,Dim_Y2)
+cv2.imwrite('affine_H2.jpg',output1)
